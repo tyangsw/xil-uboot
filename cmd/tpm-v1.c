@@ -1,245 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2013 The Chromium OS Authors.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
-#include <command.h>
-#include <dm.h>
 #include <malloc.h>
-#include <tpm.h>
 #include <asm/unaligned.h>
-#include <linux/string.h>
+#include <tpm-common.h>
+#include <tpm-v1.h>
+#include "tpm-user-utils.h"
 
-/* Useful constants */
-enum {
-	DIGEST_LENGTH		= 20,
-	/* max lengths, valid for RSA keys <= 2048 bits */
-	TPM_PUBKEY_MAX_LENGTH	= 288,
-};
-
-/**
- * Print a byte string in hexdecimal format, 16-bytes per line.
- *
- * @param data		byte string to be printed
- * @param count		number of bytes to be printed
- */
-static void print_byte_string(uint8_t *data, size_t count)
-{
-	int i, print_newline = 0;
-
-	for (i = 0; i < count; i++) {
-		printf(" %02x", data[i]);
-		print_newline = (i % 16 == 15);
-		if (print_newline)
-			putc('\n');
-	}
-	/* Avoid duplicated newline at the end */
-	if (!print_newline)
-		putc('\n');
-}
-
-/**
- * Convert a text string of hexdecimal values into a byte string.
- *
- * @param bytes		text string of hexdecimal values with no space
- *			between them
- * @param data		output buffer for byte string.  The caller has to make
- *			sure it is large enough for storing the output.  If
- *			NULL is passed, a large enough buffer will be allocated,
- *			and the caller must free it.
- * @param count_ptr	output variable for the length of byte string
- * @return pointer to output buffer
- */
-static void *parse_byte_string(char *bytes, uint8_t *data, size_t *count_ptr)
-{
-	char byte[3];
-	size_t count, length;
-	int i;
-
-	if (!bytes)
-		return NULL;
-	length = strlen(bytes);
-	count = length / 2;
-
-	if (!data)
-		data = malloc(count);
-	if (!data)
-		return NULL;
-
-	byte[2] = '\0';
-	for (i = 0; i < length; i += 2) {
-		byte[0] = bytes[i];
-		byte[1] = bytes[i + 1];
-		data[i / 2] = (uint8_t)simple_strtoul(byte, NULL, 16);
-	}
-
-	if (count_ptr)
-		*count_ptr = count;
-
-	return data;
-}
-
-/**
- * report_return_code() - Report any error and return failure or success
- *
- * @param return_code	TPM command return code
- * @return value of enum command_ret_t
- */
-static int report_return_code(int return_code)
-{
-	if (return_code) {
-		printf("Error: %d\n", return_code);
-		return CMD_RET_FAILURE;
-	} else {
-		return CMD_RET_SUCCESS;
-	}
-}
-
-/**
- * Return number of values defined by a type string.
- *
- * @param type_str	type string
- * @return number of values of type string
- */
-static int type_string_get_num_values(const char *type_str)
-{
-	return strlen(type_str);
-}
-
-/**
- * Return total size of values defined by a type string.
- *
- * @param type_str	type string
- * @return total size of values of type string, or 0 if type string
- *  contains illegal type character.
- */
-static size_t type_string_get_space_size(const char *type_str)
-{
-	size_t size;
-
-	for (size = 0; *type_str; type_str++) {
-		switch (*type_str) {
-		case 'b':
-			size += 1;
-			break;
-		case 'w':
-			size += 2;
-			break;
-		case 'd':
-			size += 4;
-			break;
-		default:
-			return 0;
-		}
-	}
-
-	return size;
-}
-
-/**
- * Allocate a buffer large enough to hold values defined by a type
- * string.  The caller has to free the buffer.
- *
- * @param type_str	type string
- * @param count		pointer for storing size of buffer
- * @return pointer to buffer or NULL on error
- */
-static void *type_string_alloc(const char *type_str, uint32_t *count)
-{
-	void *data;
-	size_t size;
-
-	size = type_string_get_space_size(type_str);
-	if (!size)
-		return NULL;
-	data = malloc(size);
-	if (data)
-		*count = size;
-
-	return data;
-}
-
-/**
- * Pack values defined by a type string into a buffer.  The buffer must have
- * large enough space.
- *
- * @param type_str	type string
- * @param values	text strings of values to be packed
- * @param data		output buffer of values
- * @return 0 on success, non-0 on error
- */
-static int type_string_pack(const char *type_str, char * const values[],
-		uint8_t *data)
-{
-	size_t offset;
-	uint32_t value;
-
-	for (offset = 0; *type_str; type_str++, values++) {
-		value = simple_strtoul(values[0], NULL, 0);
-		switch (*type_str) {
-		case 'b':
-			data[offset] = value;
-			offset += 1;
-			break;
-		case 'w':
-			put_unaligned_be16(value, data + offset);
-			offset += 2;
-			break;
-		case 'd':
-			put_unaligned_be32(value, data + offset);
-			offset += 4;
-			break;
-		default:
-			return -1;
-		}
-	}
-
-	return 0;
-}
-
-/**
- * Read values defined by a type string from a buffer, and write these values
- * to environment variables.
- *
- * @param type_str	type string
- * @param data		input buffer of values
- * @param vars		names of environment variables
- * @return 0 on success, non-0 on error
- */
-static int type_string_write_vars(const char *type_str, uint8_t *data,
-		char * const vars[])
-{
-	size_t offset;
-	uint32_t value;
-
-	for (offset = 0; *type_str; type_str++, vars++) {
-		switch (*type_str) {
-		case 'b':
-			value = data[offset];
-			offset += 1;
-			break;
-		case 'w':
-			value = get_unaligned_be16(data + offset);
-			offset += 2;
-			break;
-		case 'd':
-			value = get_unaligned_be32(data + offset);
-			offset += 4;
-			break;
-		default:
-			return -1;
-		}
-		if (env_set_ulong(*vars, value))
-			return -1;
-	}
-
-	return 0;
-}
-
-static int do_tpm_startup(cmd_tbl_t *cmdtp, int flag,
-		int argc, char * const argv[])
+static int do_tpm_startup(cmd_tbl_t *cmdtp, int flag, int argc,
+			  char * const argv[])
 {
 	enum tpm_startup_type mode;
 
@@ -259,10 +31,10 @@ static int do_tpm_startup(cmd_tbl_t *cmdtp, int flag,
 	return report_return_code(tpm_startup(mode));
 }
 
-static int do_tpm_nv_define_space(cmd_tbl_t *cmdtp, int flag,
-		int argc, char * const argv[])
+static int do_tpm_nv_define_space(cmd_tbl_t *cmdtp, int flag, int argc,
+				  char * const argv[])
 {
-	uint32_t index, perm, size;
+	u32 index, perm, size;
 
 	if (argc != 4)
 		return CMD_RET_USAGE;
@@ -273,10 +45,10 @@ static int do_tpm_nv_define_space(cmd_tbl_t *cmdtp, int flag,
 	return report_return_code(tpm_nv_define_space(index, perm, size));
 }
 
-static int do_tpm_nv_read_value(cmd_tbl_t *cmdtp, int flag,
-		int argc, char * const argv[])
+static int do_tpm_nv_read_value(cmd_tbl_t *cmdtp, int flag, int argc,
+				char * const argv[])
 {
-	uint32_t index, count, rc;
+	u32 index, count, rc;
 	void *data;
 
 	if (argc != 4)
@@ -294,10 +66,10 @@ static int do_tpm_nv_read_value(cmd_tbl_t *cmdtp, int flag,
 	return report_return_code(rc);
 }
 
-static int do_tpm_nv_write_value(cmd_tbl_t *cmdtp, int flag,
-		int argc, char * const argv[])
+static int do_tpm_nv_write_value(cmd_tbl_t *cmdtp, int flag, int argc,
+				 char * const argv[])
 {
-	uint32_t index, rc;
+	u32 index, rc;
 	size_t count;
 	void *data;
 
@@ -316,11 +88,11 @@ static int do_tpm_nv_write_value(cmd_tbl_t *cmdtp, int flag,
 	return report_return_code(rc);
 }
 
-static int do_tpm_extend(cmd_tbl_t *cmdtp, int flag,
-		int argc, char * const argv[])
+static int do_tpm_extend(cmd_tbl_t *cmdtp, int flag, int argc,
+			 char * const argv[])
 {
-	uint32_t index, rc;
-	uint8_t in_digest[20], out_digest[20];
+	u32 index, rc;
+	u8 in_digest[20], out_digest[20];
 
 	if (argc != 3)
 		return CMD_RET_USAGE;
@@ -339,10 +111,10 @@ static int do_tpm_extend(cmd_tbl_t *cmdtp, int flag,
 	return report_return_code(rc);
 }
 
-static int do_tpm_pcr_read(cmd_tbl_t *cmdtp, int flag,
-		int argc, char * const argv[])
+static int do_tpm_pcr_read(cmd_tbl_t *cmdtp, int flag, int argc,
+			   char * const argv[])
 {
-	uint32_t index, count, rc;
+	u32 index, count, rc;
 	void *data;
 
 	if (argc != 4)
@@ -360,22 +132,22 @@ static int do_tpm_pcr_read(cmd_tbl_t *cmdtp, int flag,
 	return report_return_code(rc);
 }
 
-static int do_tpm_tsc_physical_presence(cmd_tbl_t *cmdtp, int flag,
-		int argc, char * const argv[])
+static int do_tpm_tsc_physical_presence(cmd_tbl_t *cmdtp, int flag, int argc,
+					char * const argv[])
 {
-	uint16_t presence;
+	u16 presence;
 
 	if (argc != 2)
 		return CMD_RET_USAGE;
-	presence = (uint16_t)simple_strtoul(argv[1], NULL, 0);
+	presence = (u16)simple_strtoul(argv[1], NULL, 0);
 
 	return report_return_code(tpm_tsc_physical_presence(presence));
 }
 
-static int do_tpm_read_pubek(cmd_tbl_t *cmdtp, int flag,
-		int argc, char * const argv[])
+static int do_tpm_read_pubek(cmd_tbl_t *cmdtp, int flag, int argc,
+			     char * const argv[])
 {
-	uint32_t count, rc;
+	u32 count, rc;
 	void *data;
 
 	if (argc != 3)
@@ -392,22 +164,22 @@ static int do_tpm_read_pubek(cmd_tbl_t *cmdtp, int flag,
 	return report_return_code(rc);
 }
 
-static int do_tpm_physical_set_deactivated(cmd_tbl_t *cmdtp, int flag,
-		int argc, char * const argv[])
+static int do_tpm_physical_set_deactivated(cmd_tbl_t *cmdtp, int flag, int argc,
+					   char * const argv[])
 {
-	uint8_t state;
+	u8 state;
 
 	if (argc != 2)
 		return CMD_RET_USAGE;
-	state = (uint8_t)simple_strtoul(argv[1], NULL, 0);
+	state = (u8)simple_strtoul(argv[1], NULL, 0);
 
 	return report_return_code(tpm_physical_set_deactivated(state));
 }
 
-static int do_tpm_get_capability(cmd_tbl_t *cmdtp, int flag,
-		int argc, char * const argv[])
+static int do_tpm_get_capability(cmd_tbl_t *cmdtp, int flag, int argc,
+				 char * const argv[])
 {
-	uint32_t cap_area, sub_cap, rc;
+	u32 cap_area, sub_cap, rc;
 	void *cap;
 	size_t count;
 
@@ -427,63 +199,14 @@ static int do_tpm_get_capability(cmd_tbl_t *cmdtp, int flag,
 	return report_return_code(rc);
 }
 
-#define TPM_COMMAND_NO_ARG(cmd)				\
-static int do_##cmd(cmd_tbl_t *cmdtp, int flag,		\
-		int argc, char * const argv[])		\
-{							\
-	if (argc != 1)					\
-		return CMD_RET_USAGE;			\
-	return report_return_code(cmd());		\
-}
-
-TPM_COMMAND_NO_ARG(tpm_init)
-TPM_COMMAND_NO_ARG(tpm_self_test_full)
-TPM_COMMAND_NO_ARG(tpm_continue_self_test)
-TPM_COMMAND_NO_ARG(tpm_force_clear)
-TPM_COMMAND_NO_ARG(tpm_physical_enable)
-TPM_COMMAND_NO_ARG(tpm_physical_disable)
-
-static int get_tpm(struct udevice **devp)
-{
-	int rc;
-
-	rc = uclass_first_device_err(UCLASS_TPM, devp);
-	if (rc) {
-		printf("Could not find TPM (ret=%d)\n", rc);
-		return CMD_RET_FAILURE;
-	}
-
-	return 0;
-}
-
-static int do_tpm_info(cmd_tbl_t *cmdtp, int flag, int argc,
-		       char *const argv[])
-{
-	struct udevice *dev;
-	char buf[80];
-	int rc;
-
-	rc = get_tpm(&dev);
-	if (rc)
-		return rc;
-	rc = tpm_get_desc(dev, buf, sizeof(buf));
-	if (rc < 0) {
-		printf("Couldn't get TPM info (%d)\n", rc);
-		return CMD_RET_FAILURE;
-	}
-	printf("%s\n", buf);
-
-	return 0;
-}
-
-static int do_tpm_raw_transfer(cmd_tbl_t *cmdtp, int flag,
-		int argc, char * const argv[])
+static int do_tpm_raw_transfer(cmd_tbl_t *cmdtp, int flag, int argc,
+			       char * const argv[])
 {
 	struct udevice *dev;
 	void *command;
-	uint8_t response[1024];
+	u8 response[1024];
 	size_t count, response_length = sizeof(response);
-	uint32_t rc;
+	u32 rc;
 
 	command = parse_byte_string(argv[1], NULL, &count);
 	if (!command) {
@@ -505,10 +228,10 @@ static int do_tpm_raw_transfer(cmd_tbl_t *cmdtp, int flag,
 	return report_return_code(rc);
 }
 
-static int do_tpm_nv_define(cmd_tbl_t *cmdtp, int flag,
-		int argc, char * const argv[])
+static int do_tpm_nv_define(cmd_tbl_t *cmdtp, int flag, int argc,
+			    char * const argv[])
 {
-	uint32_t index, perm, size;
+	u32 index, perm, size;
 
 	if (argc != 4)
 		return CMD_RET_USAGE;
@@ -523,10 +246,10 @@ static int do_tpm_nv_define(cmd_tbl_t *cmdtp, int flag,
 	return report_return_code(tpm_nv_define_space(index, perm, size));
 }
 
-static int do_tpm_nv_read(cmd_tbl_t *cmdtp, int flag,
-		int argc, char * const argv[])
+static int do_tpm_nv_read(cmd_tbl_t *cmdtp, int flag, int argc,
+			  char * const argv[])
 {
-	uint32_t index, count, err;
+	u32 index, count, err;
 	void *data;
 
 	if (argc < 3)
@@ -552,10 +275,10 @@ static int do_tpm_nv_read(cmd_tbl_t *cmdtp, int flag,
 	return report_return_code(err);
 }
 
-static int do_tpm_nv_write(cmd_tbl_t *cmdtp, int flag,
-		int argc, char * const argv[])
+static int do_tpm_nv_write(cmd_tbl_t *cmdtp, int flag, int argc,
+			   char * const argv[])
 {
-	uint32_t index, count, err;
+	u32 index, count, err;
 	void *data;
 
 	if (argc < 3)
@@ -582,10 +305,10 @@ static int do_tpm_nv_write(cmd_tbl_t *cmdtp, int flag,
 
 #ifdef CONFIG_TPM_AUTH_SESSIONS
 
-static int do_tpm_oiap(cmd_tbl_t *cmdtp, int flag,
-		int argc, char * const argv[])
+static int do_tpm_oiap(cmd_tbl_t *cmdtp, int flag, int argc,
+		       char * const argv[])
 {
-	uint32_t auth_handle, err;
+	u32 auth_handle, err;
 
 	err = tpm_oiap(&auth_handle);
 
@@ -596,10 +319,10 @@ static int do_tpm_oiap(cmd_tbl_t *cmdtp, int flag,
 static int do_tpm_load_key_by_sha1(cmd_tbl_t *cmdtp, int flag, int argc, char *
 				   const argv[])
 {
-	uint32_t parent_handle = 0;
-	uint32_t key_len, key_handle, err;
-	uint8_t usage_auth[DIGEST_LENGTH];
-	uint8_t parent_hash[DIGEST_LENGTH];
+	u32 parent_handle = 0;
+	u32 key_len, key_handle, err;
+	u8 usage_auth[DIGEST_LENGTH];
+	u8 parent_hash[DIGEST_LENGTH];
 	void *key;
 
 	if (argc < 5)
@@ -631,11 +354,11 @@ static int do_tpm_load_key_by_sha1(cmd_tbl_t *cmdtp, int flag, int argc, char *
 }
 #endif /* CONFIG_TPM_LOAD_KEY_BY_SHA1 */
 
-static int do_tpm_load_key2_oiap(cmd_tbl_t *cmdtp, int flag,
-		int argc, char * const argv[])
+static int do_tpm_load_key2_oiap(cmd_tbl_t *cmdtp, int flag, int argc,
+				 char * const argv[])
 {
-	uint32_t parent_handle, key_len, key_handle, err;
-	uint8_t usage_auth[DIGEST_LENGTH];
+	u32 parent_handle, key_len, key_handle, err;
+	u8 usage_auth[DIGEST_LENGTH];
 	void *key;
 
 	if (argc < 5)
@@ -649,19 +372,19 @@ static int do_tpm_load_key2_oiap(cmd_tbl_t *cmdtp, int flag,
 	parse_byte_string(argv[4], usage_auth, NULL);
 
 	err = tpm_load_key2_oiap(parent_handle, key, key_len, usage_auth,
-			&key_handle);
+				 &key_handle);
 	if (!err)
 		printf("Key handle is 0x%x\n", key_handle);
 
 	return report_return_code(err);
 }
 
-static int do_tpm_get_pub_key_oiap(cmd_tbl_t *cmdtp, int flag,
-		int argc, char * const argv[])
+static int do_tpm_get_pub_key_oiap(cmd_tbl_t *cmdtp, int flag, int argc,
+				   char * const argv[])
 {
-	uint32_t key_handle, err;
-	uint8_t usage_auth[DIGEST_LENGTH];
-	uint8_t pub_key_buffer[TPM_PUBKEY_MAX_LENGTH];
+	u32 key_handle, err;
+	u8 usage_auth[DIGEST_LENGTH];
+	u8 pub_key_buffer[TPM_PUBKEY_MAX_LENGTH];
 	size_t pub_key_len = sizeof(pub_key_buffer);
 
 	if (argc < 3)
@@ -672,8 +395,8 @@ static int do_tpm_get_pub_key_oiap(cmd_tbl_t *cmdtp, int flag,
 		return CMD_RET_FAILURE;
 	parse_byte_string(argv[2], usage_auth, NULL);
 
-	err = tpm_get_pub_key_oiap(key_handle, usage_auth,
-			pub_key_buffer, &pub_key_len);
+	err = tpm_get_pub_key_oiap(key_handle, usage_auth, pub_key_buffer,
+				   &pub_key_len);
 	if (!err) {
 		printf("dump of received pub key structure:\n");
 		print_byte_string(pub_key_buffer, pub_key_len);
@@ -721,9 +444,9 @@ static int do_tpm_flush(cmd_tbl_t *cmdtp, int flag, int argc,
 	}
 
 	if (!strcasecmp(argv[2], "all")) {
-		uint16_t res_count;
-		uint8_t buf[288];
-		uint8_t *ptr;
+		u16 res_count;
+		u8 buf[288];
+		u8 *ptr;
 		int err;
 		uint i;
 
@@ -739,7 +462,7 @@ static int do_tpm_flush(cmd_tbl_t *cmdtp, int flag, int argc,
 		for (i = 0; i < res_count; ++i, ptr += 4)
 			tpm_flush_specific(get_unaligned_be32(ptr), type);
 	} else {
-		uint32_t handle = simple_strtoul(argv[2], NULL, 0);
+		u32 handle = simple_strtoul(argv[2], NULL, 0);
 
 		if (!handle) {
 			printf("Illegal resource handle %s\n", argv[2]);
@@ -757,9 +480,9 @@ static int do_tpm_list(cmd_tbl_t *cmdtp, int flag, int argc,
 		       char * const argv[])
 {
 	int type = 0;
-	uint16_t res_count;
-	uint8_t buf[288];
-	uint8_t *ptr;
+	u16 res_count;
+	u8 buf[288];
+	u8 *ptr;
 	int err;
 	uint i;
 
@@ -814,51 +537,53 @@ static int do_tpm_list(cmd_tbl_t *cmdtp, int flag, int argc,
 }
 #endif /* CONFIG_TPM_LIST_RESOURCES */
 
-#define MAKE_TPM_CMD_ENTRY(cmd) \
-	U_BOOT_CMD_MKENT(cmd, 0, 1, do_tpm_ ## cmd, "", "")
+TPM_COMMAND_NO_ARG(tpm_self_test_full)
+TPM_COMMAND_NO_ARG(tpm_continue_self_test)
+TPM_COMMAND_NO_ARG(tpm_force_clear)
+TPM_COMMAND_NO_ARG(tpm_physical_enable)
+TPM_COMMAND_NO_ARG(tpm_physical_disable)
 
-static cmd_tbl_t tpm_commands[] = {
+static cmd_tbl_t tpm1_commands[] = {
 	U_BOOT_CMD_MKENT(info, 0, 1, do_tpm_info, "", ""),
-	U_BOOT_CMD_MKENT(init, 0, 1,
-			do_tpm_init, "", ""),
+	U_BOOT_CMD_MKENT(init, 0, 1, do_tpm_init, "", ""),
 	U_BOOT_CMD_MKENT(startup, 0, 1,
-			do_tpm_startup, "", ""),
+			 do_tpm_startup, "", ""),
 	U_BOOT_CMD_MKENT(self_test_full, 0, 1,
-			do_tpm_self_test_full, "", ""),
+			 do_tpm_self_test_full, "", ""),
 	U_BOOT_CMD_MKENT(continue_self_test, 0, 1,
-			do_tpm_continue_self_test, "", ""),
+			 do_tpm_continue_self_test, "", ""),
 	U_BOOT_CMD_MKENT(force_clear, 0, 1,
-			do_tpm_force_clear, "", ""),
+			 do_tpm_force_clear, "", ""),
 	U_BOOT_CMD_MKENT(physical_enable, 0, 1,
-			do_tpm_physical_enable, "", ""),
+			 do_tpm_physical_enable, "", ""),
 	U_BOOT_CMD_MKENT(physical_disable, 0, 1,
-			do_tpm_physical_disable, "", ""),
+			 do_tpm_physical_disable, "", ""),
 	U_BOOT_CMD_MKENT(nv_define_space, 0, 1,
-			do_tpm_nv_define_space, "", ""),
+			 do_tpm_nv_define_space, "", ""),
 	U_BOOT_CMD_MKENT(nv_read_value, 0, 1,
-			do_tpm_nv_read_value, "", ""),
+			 do_tpm_nv_read_value, "", ""),
 	U_BOOT_CMD_MKENT(nv_write_value, 0, 1,
-			do_tpm_nv_write_value, "", ""),
+			 do_tpm_nv_write_value, "", ""),
 	U_BOOT_CMD_MKENT(extend, 0, 1,
-			do_tpm_extend, "", ""),
+			 do_tpm_extend, "", ""),
 	U_BOOT_CMD_MKENT(pcr_read, 0, 1,
-			do_tpm_pcr_read, "", ""),
+			 do_tpm_pcr_read, "", ""),
 	U_BOOT_CMD_MKENT(tsc_physical_presence, 0, 1,
-			do_tpm_tsc_physical_presence, "", ""),
+			 do_tpm_tsc_physical_presence, "", ""),
 	U_BOOT_CMD_MKENT(read_pubek, 0, 1,
-			do_tpm_read_pubek, "", ""),
+			 do_tpm_read_pubek, "", ""),
 	U_BOOT_CMD_MKENT(physical_set_deactivated, 0, 1,
-			do_tpm_physical_set_deactivated, "", ""),
+			 do_tpm_physical_set_deactivated, "", ""),
 	U_BOOT_CMD_MKENT(get_capability, 0, 1,
-			do_tpm_get_capability, "", ""),
+			 do_tpm_get_capability, "", ""),
 	U_BOOT_CMD_MKENT(raw_transfer, 0, 1,
-			do_tpm_raw_transfer, "", ""),
+			 do_tpm_raw_transfer, "", ""),
 	U_BOOT_CMD_MKENT(nv_define, 0, 1,
-			do_tpm_nv_define, "", ""),
+			 do_tpm_nv_define, "", ""),
 	U_BOOT_CMD_MKENT(nv_read, 0, 1,
-			do_tpm_nv_read, "", ""),
+			 do_tpm_nv_read, "", ""),
 	U_BOOT_CMD_MKENT(nv_write, 0, 1,
-			do_tpm_nv_write, "", ""),
+			 do_tpm_nv_write, "", ""),
 #ifdef CONFIG_TPM_AUTH_SESSIONS
 	U_BOOT_CMD_MKENT(oiap, 0, 1,
 			 do_tpm_oiap, "", ""),
@@ -883,21 +608,15 @@ static cmd_tbl_t tpm_commands[] = {
 #endif /* CONFIG_TPM_LIST_RESOURCES */
 };
 
-static int do_tpm(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+cmd_tbl_t *get_tpm_commands(unsigned int *size)
 {
-	cmd_tbl_t *tpm_cmd;
+	*size = ARRAY_SIZE(tpm1_commands);
 
-	if (argc < 2)
-		return CMD_RET_USAGE;
-	tpm_cmd = find_cmd_tbl(argv[1], tpm_commands, ARRAY_SIZE(tpm_commands));
-	if (!tpm_cmd)
-		return CMD_RET_USAGE;
-
-	return tpm_cmd->cmd(cmdtp, flag, argc - 1, argv + 1);
+	return tpm1_commands;
 }
 
 U_BOOT_CMD(tpm, CONFIG_SYS_MAXARGS, 1, do_tpm,
-"Issue a TPM command",
+"Issue a TPMv1.x command",
 "cmd args...\n"
 "    - Issue TPM command <cmd> with arguments <args...>.\n"
 "Admin Startup and State Commands:\n"

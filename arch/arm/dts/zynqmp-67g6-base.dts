@@ -817,6 +817,11 @@
 
 &spi0 {
 	status = "okay";
+	tpm@1 {
+		compatible = "tis,tpm2-spi";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+	};
 };
 
 &qspi {

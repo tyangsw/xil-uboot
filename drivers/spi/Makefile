@@ -5,6 +5,8 @@
 # SPDX-License-Identifier:	GPL-2.0+
 #
 
+ccflags-y = -O0 -g3 -fno-inline -DDEBUG
+
 # There are many options which enable SPI, so make this library available
 ifdef CONFIG_DM_SPI
 obj-y += spi-uclass.o

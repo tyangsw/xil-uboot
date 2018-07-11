@@ -5,6 +5,8 @@
 # SPDX-License-Identifier:	GPL-2.0+
 #
 
+ccflags-y = -O0 -g3 -fno-inline -DDEBUG
+
 ifndef CONFIG_SPL_BUILD
 
 obj-$(CONFIG_EFI) += efi/
@@ -39,7 +41,9 @@ obj-$(CONFIG_PHYSMEM) += physmem.o
 obj-y += qsort.o
 obj-y += rc4.o
 obj-$(CONFIG_SUPPORT_EMMC_RPMB) += sha256.o
-obj-$(CONFIG_TPM) += tpm.o
+obj-$(CONFIG_TPM) += tpm-common.o
+obj-$(CONFIG_TPM_V1) += tpm-v1.o
+obj-$(CONFIG_TPM_V2) += tpm-v2.o
 obj-$(CONFIG_RBTREE)	+= rbtree.o
 obj-$(CONFIG_BITREVERSE) += bitrev.o
 obj-y += list_sort.o
