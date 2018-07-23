@@ -21,6 +21,7 @@
 #include <zynqmppl.h>
 #include <i2c.h>
 #include <g_dnl.h>
+#include "../common/module_init.h"
 
 DECLARE_GLOBAL_DATA_PTR;
 
@@ -300,6 +301,9 @@ int board_init(void)
 		fpga_add(fpga_xilinx, &zynqmppl);
 	}
 #endif
+	
+	/*init module*/
+	nai_init_module();
 
 	return 0;
 }
@@ -512,7 +516,7 @@ int board_late_init(void)
 	}
 
 	env_set("boot_targets", new_targets);
-
+	
 	return 0;
 }
 

@@ -20,6 +20,12 @@
 /* NAI Module Feature */
 #define NAI_MAX_MODULE_SLOT 6 //max slot: 1 ~ 6
 #define NAI_MODULE_SUPPORT
+#define NAI_MODULE_ID_IIC
+#define NAI_BUILDIN_MODULE_SUPPORT
+#ifdef NAI_BUILDIN_MODULE_SUPPORT
+	#define NAI_BUILDIN_MOD_SLOT_NUM 1
+	#define NAI_BUILDIN_MOD_SLOT NAI_MAX_MODULE_SLOT
+#endif
 
 /*Module AXI I2C Feature */
 #define CONFIG_SYS_I2C_ZYNQ_AXI
