@@ -9,7 +9,6 @@
  */
 
 /dts-v1/;
-
 #include "zynqmp.dtsi"
 #include "zynqmp-clk-ccf.dtsi"
 #include <dt-bindings/input/input.h>
@@ -44,9 +43,14 @@
 
 	memory@0 {
 		device_type = "memory";
-		reg = <0x0 0x0 0x0 0x80000000>, <0x8 0x00000000 0x0 0x80000000>;
+		reg = <0x0 0x0 0x0 0x80000000>;
 	};
 
+	cpus {
+		/delete-node/ cpu@2 ;
+		/delete-node/ cpu@3 ;
+	};
+	
 	gpio-keys {
 		compatible = "gpio-keys";
 		#address-cells = <1>;
