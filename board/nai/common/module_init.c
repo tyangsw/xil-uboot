@@ -25,7 +25,8 @@
 #define DEBUGF(x...)
 #endif /* DEBUG */
 
-#define NAI_SUCCESS        1
+#define NAI_SUCCESS        0
+#define NAI_FAILED        -1
 #define EEPROM_50_ADDR     0x50
 #define EEPROM_51_ADDR     0x51
 #define EEPROM_SIZE        256
@@ -71,11 +72,11 @@ static unsigned int const i2c_bus_num[] = {
 };
 #endif
 
-#define HSS_MOD_COMMON_MEM_ADDRESS      0x0
+#define HSS_MOD_COMMON_MEM_ADDRESS      0x0UL
 #define HSS_MOD_VER_ADDR               (HSS_MOD_COMMON_MEM_ADDRESS + 0x0030)
 
 //Module common module mode ready state offset
-#define HSS_MOD_READY_STATE      (HSS_MOD_COMMON_MEM_ADDRESS + 0x025C)
+#define HSS_MOD_READY_STATE      (HSS_MOD_COMMON_MEM_ADDRESS + 0x025CUL)
 //Module Operation Mode States
 #define HSS_MOD_OPERSTATE_FW_ENTERED_BIT                 (1UL << 16)
 #define HSS_MOD_FW_READY_TIMEOUT                         (5 * 1000) // 5 * 1000ms = 5 seconds
@@ -121,6 +122,14 @@ typedef volatile struct {
     } reset_ctr;
     
 } MB_RESET_CONFIG_REG;
+
+/*MB Built-in ID register 0x84c10300*/
+typedef volatile struct {
+    
+    u32 mod_id;        /*0x000 built-in module id*/
+    u32 mod_size;      /*0x004 built-in module size*/
+
+} MB_BUILTIN_MOD_ID_REG;
 
 /*Module address Configuration Register Map 0x43C1 0030*/
 /*Module address Configuration Register Map ultrascale 0x83C1 0030*/
@@ -215,6 +224,7 @@ typedef struct {
 /*global variable*/
 MB_COMMON_MODULE *pCommonModule = (MB_COMMON_MODULE *) PS2FPGA_MB_COMMON_MODULE_STATUS_BASE_ADDR;
 MB_RESET_CONFIG_REG *pMbResetReg = (MB_RESET_CONFIG_REG *) PS2FPGA_RESET_DURATION_OFFSET;
+MB_BUILTIN_MOD_ID_REG *pMbBuiltInModIdReg = (MB_BUILTIN_MOD_ID_REG *) PS2FPGA_MB_BUILTIN_MOD_BASE;
 MOD_ADDR_CONFIG *pModAddrConf = (MOD_ADDR_CONFIG *) PS2FPGA_MODULE1_ADDR_OFFSET;
 MOD_CONFIG_REG *pModConfReg = (MOD_CONFIG_REG *) PS2FPGA_MODULE_CONFIG_BASE_ADDR;
 
@@ -236,7 +246,7 @@ static void _hss_module_reset(u8 slot);
 static void _hss_wait_link(u8 slot);
 static void _hss_wait_detection(u8 slot);
 static void _hss_wait_fw_rdy(u8 slot);
-
+static s32 _hss_mod_read32(u8 slot, u32 offset, u32* buf);
 
 static void _em1_module_init(u8 slot);
 static void _es1_module_init(u8 slot);
@@ -442,10 +452,10 @@ static void _find_module_builtin(void)
      * memory area
      */
     /*set module id*/
-    pCommonModule->mod_id[slot] = ___swab32(pBuiltinModCommon->builtin_mod_id);
+    pCommonModule->mod_id[slot] = ___swab32(pMbBuiltInModIdReg->mod_id);
     
     /*set module size*/
-    pCommonModule->mod_size[slot] = pBuiltinModCommon->builtin_mod_size;
+    pCommonModule->mod_size[slot] = pMbBuiltInModIdReg->mod_size;
             
     DEBUGF("%s:mod status 0x%01x \n",__func__,pCommonModule->mod[slot].status.bits.detected);
     DEBUGF("%s:mod id   0x%08x  \n",__func__,pCommonModule->mod_id[slot]);
@@ -1013,14 +1023,10 @@ static void _hss_wait_fw_rdy(u8 slot)
     //clear hss fw ready bit
     pCommonModule->mod[slot].status.bits.hss_fw_ready = 0;
     
-    //TODO: Fix this
-    //nai_init_msg_utils(MB_SLOT);
-        
     time = get_timer(0);
         
     do{
-        //TODO: Fix this
-        //status = nai_read_reg32_by_slot_request((u8)(slot+1), (u32)HSS_MOD_READY_STATE, &data);
+        status = _hss_mod_read32(slot,(u32)HSS_MOD_READY_STATE, &data);
         
         if (status != NAI_SUCCESS){
             break;
@@ -1039,7 +1045,24 @@ static void _hss_wait_fw_rdy(u8 slot)
     }
     
     DEBUGF("Module# %x HSS FW 0x%08x\n", slot,data);
-
+}
+ 
+static s32 _hss_mod_read32(u8 slot, u32 offset, u32* buf)
+{
+   volatile u32* paddr;
+   s32 ret = NAI_FAILED;
+  
+   if(pCommonModule->mod[slot].status.bits.hss_link_done == 1)
+   {
+      if(pCommonModule->mod_addr[slot] != 0xFFFFFFFF && 
+         pCommonModule->mod_size[slot] > offset)
+      {
+	 paddr = (volatile u32 *)(PS2FPGA_HSS_COM_BASE|(pCommonModule->mod_addr[slot] + offset));
+	 *buf = *paddr;
+	 ret = NAI_SUCCESS;
+      }
+   }
+   return ret;
 }
 
 static void _init_module(void)
@@ -1370,8 +1393,8 @@ printf("Initializing Module\n");
     nai_cpci_setup();
 #endif
     /*let's party*/
-    //_init_module();
-
+    _init_module();
+    
 #ifdef NAI_BUILDIN_MODULE_SUPPORT
     /*init built-in module*/
     builtin_mod_init();
