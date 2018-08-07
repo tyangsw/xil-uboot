@@ -33,6 +33,7 @@
 
 /*special module defined */
 #define MODULE_ID_CTS      0x43545300UL 
+#define MODULE_ID_DT4      0x44543400UL
 #define MODULE_ID_ES1      0x45533100UL
 #define MODULE_ID_ES2      0x45533200UL
 #define MODULE_ID_EM1      0x454D3100UL
@@ -587,7 +588,7 @@ static void _init_common(void)
             size = pCommonModule->mod_size[slot];
             id = pCommonModule->mod_id[slot];
             
-            if(id == 0xFFFFFFFF)
+            if(id == 0xFFFFFFFF || id == 0)
             {
                 /*incorrect module id*/
                 /*write 0xFFFFFFFF to module address*/
@@ -1397,7 +1398,11 @@ printf("Initializing Module\n");
     
 #ifdef NAI_BUILDIN_MODULE_SUPPORT
     /*init built-in module*/
-    builtin_mod_init();
+    /*TODO: move builin module id verify to builin_module_init.c*/
+    if(pCommonModule->mod_id[NAI_BUILDIN_MOD_SLOT] == (MODULE_ID_DT4|MODULE_ID_SPACE))
+    {
+       builtin_mod_init();
+    }
 #endif
 
     /*print module information*/
