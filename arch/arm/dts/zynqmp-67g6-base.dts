@@ -21,7 +21,8 @@
 	compatible = "xlnx,zynqmp-67g6", "xlnx,zynqmp";
 
 	aliases {
-		ethernet0 = &gem1;
+		ethernet0 = &gem0;
+		ethernet1 = &gem1;
 		gpio0 = &gpio;
 		i2c0 = &i2c0;
 		i2c1 = &i2c1;
@@ -115,6 +116,21 @@
 
 &fpd_dma_chan8 {
 	status = "okay";
+};
+
+&gem0 {
+	status = "okay";
+	phy-handle = <&phy0>;
+	phy-mode = "rgmii-id";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_gem0_default>;
+	phy0: phy@0 {
+		reg = <0>;
+		ti,rx-internal-delay = <0x8>;
+		ti,tx-internal-delay = <0xa>;
+		ti,fifo-depth = <0x1>;
+		ti,rxctrl-strap-worka;
+	};
 };
 
 &gem1 {
@@ -702,6 +718,46 @@
 			bias-disable;
 		};
 	};
+	
+	pinctrl_gem0_default: gem0-default {
+		mux {
+			function = "ethernet0";
+			groups = "ethernet3_0_grp";
+		};
+
+		conf {
+			groups = "ethernet0_0_grp";
+			slew-rate = <SLEW_RATE_SLOW>;
+			io-standard = <IO_STANDARD_LVCMOS18>;
+		};
+
+		conf-rx {
+			pins = "MIO32", "MIO33", "MIO34", "MIO35", "MIO36",
+									"MIO37";
+			bias-high-impedance;
+			low-power-disable;
+		};
+
+		conf-tx {
+			pins = "MIO26", "MIO27", "MIO28", "MIO29", "MIO30",
+									"MIO31";
+			bias-disable;
+			low-power-enable;
+		};
+
+		mux-mdio {
+			function = "mdio0";
+			groups = "mdio0_0_grp";
+		};
+
+		conf-mdio {
+			groups = "mdio0_0_grp";
+			slew-rate = <SLEW_RATE_SLOW>;
+			io-standard = <IO_STANDARD_LVCMOS18>;
+			bias-disable;
+		};
+	};
+	
 	pinctrl_gem1_default: gem1-default {
 		mux {
 			function = "ethernet1";

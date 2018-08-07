@@ -35,9 +35,22 @@
 	};
 };
 
+&gem0 {
+	phy-handle = <&phy0>;
+	phy0: phy@0 {
+		reg = <0x0>;
+		ti,rx-internal-delay = <0x8>;
+		ti,tx-internal-delay = <0xa>;
+		ti,fifo-depth = <0x1>;
+		ti,rxctrl-strap-worka;
+	};
+	/* Cleanup from RevA */
+	/delete-node/ phy@21;
+};
+
 &gem1 {
 	phy-handle = <&phy1>;
-	phyc: phy@1 {
+	phy1: phy@1 {
 		reg = <0x1>;
 		ti,rx-internal-delay = <0x8>;
 		ti,tx-internal-delay = <0xa>;

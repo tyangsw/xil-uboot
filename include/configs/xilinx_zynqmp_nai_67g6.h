@@ -27,6 +27,8 @@
 	#define NAI_BUILDIN_MOD_SLOT NAI_MAX_MODULE_SLOT
 #endif
 
+#define NAI_MDIO_MUX_WR
+
 /*Module AXI I2C Feature */
 #define CONFIG_SYS_I2C_ZYNQ_AXI
 #ifdef CONFIG_SYS_I2C_ZYNQ_AXI
