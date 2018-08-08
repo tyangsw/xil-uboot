@@ -191,7 +191,7 @@ static u32 phy_setup_op(struct zynq_gem_priv *priv, u32 phy_addr, u32 regnum,
 {
 	u32 mgtcr;
 #ifdef	NAI_MDIO_MUX_WR
-	struct zynq_gem_regs *regs = (struct zynq_gem_regs *)(0xFF0C0000UL);
+	struct zynq_gem_regs *regs = (struct zynq_gem_regs *)(ZYNQ_GEM1_MDIO_BASEADDR);
 #else
 	struct zynq_gem_regs *regs = priv->iobase;
 #endif
@@ -320,7 +320,7 @@ static int zynq_phy_init(struct udevice *dev)
 	int ret;
 	struct zynq_gem_priv *priv = dev_get_priv(dev);
 #ifdef	NAI_MDIO_MUX_WR
-	struct zynq_gem_regs *regs = (struct zynq_gem_regs *)(0xFF0C0000UL);
+	struct zynq_gem_regs *regs = (struct zynq_gem_regs *)(ZYNQ_GEM1_MDIO_BASEADDR);
 #else
 	struct zynq_gem_regs *regs = priv->iobase;
 #endif

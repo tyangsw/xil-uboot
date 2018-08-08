@@ -28,6 +28,9 @@
 #endif
 
 #define NAI_MDIO_MUX_WR
+#ifdef NAI_MDIO_MUX_WR
+	#define ZYNQ_GEM1_MDIO_BASEADDR	0xFF0C0000UL
+#endif
 
 /*Module AXI I2C Feature */
 #define CONFIG_SYS_I2C_ZYNQ_AXI
