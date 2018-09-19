@@ -392,6 +392,6 @@
 #endif
 
 /*disable early init is required PMU and ATF*/
-/*#define CONFIG_BOARD_EARLY_INIT_F*/
+#define CONFIG_BOARD_EARLY_INIT_F
 
 #endif /* __XILINX_ZYNQMP_NAI_ */
