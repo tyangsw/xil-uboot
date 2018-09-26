@@ -121,8 +121,40 @@ typedef volatile struct {
             u32 _reservered2    :26;  /*bit 6 - 31 reserved*/
         } bits;
     } reset_ctr;
-    
+        
+    u32 all_mod_mask;  /*0x068 all module address decode mask*/
+     
 } MB_RESET_CONFIG_REG;
+
+/*MB FPGA Module Address Config Status Register Map 0x83C0 0018*/
+typedef volatile struct {
+    union {
+        u32 reg;
+        struct {
+                u32 _reservered1   :20;  /*bit 0 - 19  reservered*/
+                u32 config_done    : 1;  /*bit 20 FPGA module address config done*/
+                u32 _reservered2   :11;  /*bit 21 - 31 reservered*/
+        } bits;
+    } status;
+} MOD_ADDR_CONFIG_STATUS;
+
+/*Module ID Status Register Map 0x43C0 0028 - 0x43C0 0060*/
+typedef volatile struct {
+    u32 mod_addr_offset;                  /*0x028 HSS module memory start offset*/
+    union {                               /*0x02C module status from FPGA*/
+        u32 reg;
+        struct {
+                u32 detected       : 8;  /*bit 0 - 7  module detected by FPGA bit (ReadOnly)*/
+                u32 _reservered1   : 8;  /*bit 8 - 15 reservered*/
+                u32 powered        : 8;  /*bit 16 - 23 module powered on by FPGA (ReadOnly)*/
+                u32 _reservered2   : 8;  /*bit 24 - 31 reservered*/
+        } bits;
+    } status;
+    struct {                             /*0x030 - 0x05C module id and module size that FPGA read from module eeprom*/
+        u32 id;
+        u32 size;
+    } mod[6];
+} MOD_INFO_REG;
 
 /*MB Built-in ID register 0x84c10300*/
 typedef volatile struct {
@@ -147,7 +179,13 @@ typedef volatile struct {
                 u32 _reservered3  : 4;  /*bit 28 - 31 reserverd*/
             } bits;
         } adr;
-        u32 enable;                     /*enable module bit 0 1=enable 0=disable*/
+        union {
+            u32 reg;
+            struct {
+                u32 enabled       : 1;  /*bit 0 HSS access enable bit*/
+                u32 _reserverd1   :31;  /*bit 1 - 31 reserved*/
+            } bits;
+        } status;
     } mod_adr_cfg[7];
     
     u32 all_mod_mask;  /*0x068 all module address decode mask*/
@@ -225,13 +263,16 @@ typedef struct {
 /*global variable*/
 MB_COMMON_MODULE *pCommonModule = (MB_COMMON_MODULE *) PS2FPGA_MB_COMMON_MODULE_STATUS_BASE_ADDR;
 MB_RESET_CONFIG_REG *pMbResetReg = (MB_RESET_CONFIG_REG *) PS2FPGA_RESET_DURATION_OFFSET;
+MOD_INFO_REG *pModInfo = (MOD_INFO_REG *) PS2FPGA_MOD_INFO_OFFSET;
 MB_BUILTIN_MOD_ID_REG *pMbBuiltInModIdReg = (MB_BUILTIN_MOD_ID_REG *) PS2FPGA_MB_BUILTIN_MOD_BASE;
 MOD_ADDR_CONFIG *pModAddrConf = (MOD_ADDR_CONFIG *) PS2FPGA_MODULE1_ADDR_OFFSET;
+MOD_ADDR_CONFIG_STATUS *pModAddrConfSts = (MOD_ADDR_CONFIG_STATUS *) PS2FPGA_TOP_PCIE_REV_OFFSET;
 MOD_CONFIG_REG *pModConfReg = (MOD_CONFIG_REG *) PS2FPGA_MODULE_CONFIG_BASE_ADDR;
 
 static u8 eeprom_data[EEPROM_SIZE];
 
 /*static function prototype*/
+static u32 _get_mb_fpga_rev(void);
 static void _print_mod_status(void);
 static void _find_module(void);
 static void _init_common(void);
@@ -261,6 +302,8 @@ static void _te1_module_deinit(u8 slot);
 static void _find_module_iic(void);
 static s32 _read_eeprom_iic(u8 slot, u32 addr, u32 count, u8 *buf);
 static s32 _write_eeprom_iic(u8 slot, u32 addr, u32 count, u8 *buf);
+static void _wait_fpga_config_done(void);
+static void _find_module_fpga(void);
 #endif
 
 #if defined(NAI_MODULE_ID_SLV)
@@ -376,6 +419,63 @@ static void _find_module_iic()
         }
     }
 }
+static void _wait_fpga_config_done(void)
+{
+    ulong time = 0;
+    u8 config_done = 0;
+    
+    time = get_timer(0);
+    
+    do{
+        config_done =  pModAddrConfSts->status.bits.config_done;
+        //timeout
+        if(get_timer(time) > MODULE_DONE_TIMEOUT)
+            break;
+    }while(!config_done);
+    
+    DEBUGF("Module# %x fpga config done [fpga_config_done = 0x%02x]\n",slot,config_done);
+}
+
+static void _find_module_fpga(void)
+{
+    u8 slot = 0, powered = 0, detected = 0;
+    
+    
+    /*set module id and size to MB module common area*/
+    for(slot = 0; slot < MAX_MODULE_SLOT; slot++)
+    {
+        /*clear MB module powered and detected status*/
+        pCommonModule->mod[slot].status.bits.detected = 0;
+        pCommonModule->mod[slot].status.bits.power = 0;
+        
+        detected = (pModInfo->status.bits.detected & (1 << slot));
+        /*look for module and read mod id and size from fpga*/
+        if(detected)
+        {
+            /*set module detected bitmap in MB common*/
+            pCommonModule->mod[slot].status.bits.detected = 1;
+            
+            powered = (pModInfo->status.bits.powered & (1 << slot));
+            /*set module powered bitmap in MB common*/
+            if(powered)
+              pCommonModule->mod[slot].status.bits.power = 1;
+            
+            /*
+             * Mark's MBexec wants big endian when storing
+             * module ID and module size data to MB common
+             * memory area
+             */
+            /*set module id*/
+            pCommonModule->mod_id[slot] = pModInfo->mod[slot].id;
+            /*set module size*/
+            pCommonModule->mod_size[slot] = pModInfo->mod[slot].size;
+
+            DEBUGF("%s:mod status 0x%01x \n",__func__,pCommonModule->mod[slot].status.bits.detected);
+            DEBUGF("%s:mod id   0x%08x  \n",__func__,pCommonModule->mod_id[slot]);
+            DEBUGF("%s:mod size 0x%08x \n",__func__,pCommonModule->mod_size[slot]);
+        }
+    }
+}
 #endif /*NAI_MODULE_ID_IIC*/
 
 #if defined(NAI_MODULE_ID_SLV)
@@ -469,7 +569,18 @@ static void _find_module(void)
 #if defined(NAI_MODULE_ID_SLV)
     _find_module_slv();
 #elif defined(NAI_MODULE_ID_IIC)
-    _find_module_iic();
+    /*fpga major revision v2.0 above*/
+    if((_get_mb_fpga_rev() >> 16) >= 2)
+    {
+        _wait_fpga_config_done();
+        
+        if(pModAddrConfSts->status.bits.config_done)
+            _find_module_fpga();
+    }
+    else
+    {
+        _find_module_iic();
+    }
 #endif
 #if defined(NAI_BUILDIN_MODULE_SUPPORT)
     _find_module_builtin();
@@ -512,20 +623,20 @@ static void _init_addr_msk(void)
                 /*take bit 23 ~ 14 of a end of address and set to mod address mask*/
                 pModAddrConf->mod_adr_cfg[slot].adr.bits.end_adr = ((0xFFC000 & ((addr + size) -1)) >> 14);
                 /*enable module access*/
-                pModAddrConf->mod_adr_cfg[slot].enable = 1;
+                pModAddrConf->mod_adr_cfg[slot].status.bits.enabled = 1;
                 /*increment total size*/
                 total_size += size;
             }
             else
             {
                 /*disable module access when size is out of range*/
-                pModAddrConf->mod_adr_cfg[slot].enable = 0;
+                pModAddrConf->mod_adr_cfg[slot].status.bits.enabled = 0;
             }
             continue;
         }
         
         /*disable module access when there is no module a slot*/
-        pModAddrConf->mod_adr_cfg[slot].enable = 0;
+        pModAddrConf->mod_adr_cfg[slot].status.bits.enabled = 0;
     }
     
     /*find all module decode address mask*/
@@ -960,7 +1071,7 @@ static void _hss_module_init(u8 slot)
 
 static void _hss_module_post_init(u8 slot)
 {
-    u32 detected = 0;
+    u32 detected = 0, hssInReset = 0;
     
     /*change mod mio[7:0] config src to HSS*/
     pModConfReg->mod_src_sel[slot] = 0;
@@ -972,10 +1083,14 @@ static void _hss_module_post_init(u8 slot)
     DEBUGF("%s:hss_det_done 0x%08x \n",__func__,detected);
     if(detected)
     {
-        /*release module hss interface from reset*/
-        pModConfReg->hss_if_reset &= ~(1 << slot);
+        hssInReset = (pModConfReg->hss_if_reset & (1 << slot));
+        if(hssInReset)
+        {
+            /*release module hss interface from reset*/
+ 
+              pModConfReg->hss_if_reset &= ~(1 << slot);
 
-        udelay(MODULE_25000_USDELAY);
+        }
         
         /*wait for hss link detetion*/ 
         _hss_wait_link(slot);
@@ -1364,6 +1479,16 @@ void static _print_mod_status(void)
     }
 }
 
+static u32 _get_mb_fpga_rev(void)
+{
+    u32 rev = 0;
+    
+    /*get fpga revision*/
+    rev = readl(PS2FPGA_TOP_MB_REV_OFFSET);
+    
+    return rev;
+}
+
 /*entry point*/
 void nai_init_module(void)
 {
@@ -1389,10 +1514,6 @@ printf("Initializing Module\n");
     _init_common();
     /*init module address mask*/
     _init_addr_msk();
-#ifdef CONFIG_NAI_CPCI
-    /*setup cPCI bar*/
-    nai_cpci_setup();
-#endif
     /*let's party*/
     _init_module();
     
