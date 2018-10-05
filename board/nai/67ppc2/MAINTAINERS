@@ -1,6 +1,6 @@
-NAI_ZYNQMP_67G6 BOARDS
+NAI_ZYNQMP_67PPC2 BOARDS
 M:	NAI <nai@nai.com>
 S:	Maintained
-F:	board/nai/67g6/
+F:	board/nai/67ppc2/
 F:	include/configs/nai_zynqmp*
 F:	configs/nai_zynqmp*

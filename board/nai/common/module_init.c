@@ -539,6 +539,7 @@ static void _find_module_slv()
 }
 #endif /*NAI_MODULE_ID_SLV*/
 
+#if defined(NAI_BUILDIN_MODULE_SUPPORT)
 static void _find_module_builtin(void)
 {
      u8 slot = NAI_BUILDIN_MOD_SLOT;
@@ -563,6 +564,7 @@ static void _find_module_builtin(void)
     DEBUGF("%s:mod size 0x%08x \n",__func__,pCommonModule->mod_size[slot]);
     
 }
+#endif
 
 static void _find_module(void)
 {
@@ -600,7 +602,7 @@ static void _init_addr_msk(void)
     u32 detected = 0;
 #if defined(NAI_BUILDIN_MODULE_SUPPORT)
     u32 maxSlot = (MAX_MODULE_SLOT + NAI_BUILDIN_MOD_SLOT_NUM);
-#elif
+#else
     u32 maxSlot = MAX_MODULE_SLOT;
 #endif    
     
@@ -677,7 +679,7 @@ static void _init_common(void)
     u8 slot  = 0;
 #if defined(NAI_BUILDIN_MODULE_SUPPORT)
     u32 maxSlot = (MAX_MODULE_SLOT + NAI_BUILDIN_MOD_SLOT_NUM);
-#elif
+#else
     u32 maxSlot = MAX_MODULE_SLOT;
 #endif  
     
@@ -1433,7 +1435,7 @@ void static _print_mod_status(void)
     u32 detected = 0;
 #if defined(NAI_BUILDIN_MODULE_SUPPORT)
     u32 maxSlot = (MAX_MODULE_SLOT + NAI_BUILDIN_MOD_SLOT_NUM);
-#elif
+#else
     u32 maxSlot = MAX_MODULE_SLOT;
 #endif  
     
