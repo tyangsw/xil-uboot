@@ -5,6 +5,7 @@
  */
  
 #include <common.h>
+#include <command.h>
 #include <asm/io.h>
 #include <malloc.h>
 #include <i2c.h>
@@ -37,7 +38,9 @@
 #define MODULE_ID_ES1      0x45533100UL
 #define MODULE_ID_ES2      0x45533200UL
 #define MODULE_ID_EM1      0x454D3100UL
+#define MODULE_ID_FM2      0x464D3200UL
 #define MODULE_ID_FM5      0x464D3500UL
+#define MODULE_ID_FM7      0x464D3700UL
 #define MODULE_ID_FW1      0x46573100UL
 #define MODULE_ID_FW2      0x46573200UL
 #define MODULE_ID_TE1      0x54453100UL
@@ -293,7 +296,9 @@ static s32 _hss_mod_read32(u8 slot, u32 offset, u32* buf);
 static void _em1_module_init(u8 slot);
 static void _es1_module_init(u8 slot);
 static void _es1_module_deinit(u8 slot);
+#if defined(CONFIG_NAI_MODULE_PROC)   
 static void _fm5_module_init(u8 slot);
+#endif
 static void _fw1_module_init(u8 slot);
 static void _te1_module_init(u8 slot);
 static void _te1_module_deinit(u8 slot);
@@ -752,6 +757,8 @@ static void _init_common(void)
     pCommonModule->module_addr_rdy = 0xA5A5A5A5;
 }
 
+    
+#if defined(CONFIG_NAI_MODULE_PROC)
 static void _fm5_module_init(u8 slot)
 {
     /*change mod mio[7:0] config src to GPIO*/
@@ -779,6 +786,7 @@ static void _fm5_module_init(u8 slot)
     pModConfReg->mod_gpio_data[slot] &= ~(1 << 2);
 #endif
 }
+#endif
 
 static void _fw1_module_init(u8 slot)
 {
@@ -1222,9 +1230,13 @@ static void _init_module(void)
                   DEBUGF("%s:EM1 0x%08x \n",__func__,id);
                   _em1_module_init(slot);
                   break;
+                case MODULE_ID_FM2|MODULE_ID_SPACE :
                 case MODULE_ID_FM5|MODULE_ID_SPACE :
-                  DEBUGF("%s:FM5 0x%08x \n",__func__,id);
+                case MODULE_ID_FM7|MODULE_ID_SPACE :
+                  DEBUGF("%s:FMx 0x%08x \n",__func__,id);
+#if defined(CONFIG_NAI_MODULE_PROC)    
                   _fm5_module_init(slot);
+#endif
                   break;
                 case MODULE_ID_FW1|MODULE_ID_SPACE :
                 case MODULE_ID_FW2|MODULE_ID_SPACE :
@@ -1279,7 +1291,9 @@ static void _init_module(void)
                 (id != (MODULE_ID_EM1|MODULE_ID_SPACE)) &&
                 (id != (MODULE_ID_FW1|MODULE_ID_SPACE)) &&
                 (id != (MODULE_ID_FW2|MODULE_ID_SPACE)) &&
+                (id != (MODULE_ID_FM2|MODULE_ID_SPACE)) &&
                 (id != (MODULE_ID_FM5|MODULE_ID_SPACE)) &&
+                (id != (MODULE_ID_FM7|MODULE_ID_SPACE)) &&
                 (id != (MODULE_ID_TE1|MODULE_ID_SPACE)))
             {
                 _hss_module_post_init(slot);
@@ -1328,7 +1342,9 @@ static void _deinit_module(void)
                   break;
                 case MODULE_ID_FW1|MODULE_ID_SPACE :
                 case MODULE_ID_FW2|MODULE_ID_SPACE :
+                case MODULE_ID_FM2|MODULE_ID_SPACE :
                 case MODULE_ID_FM5|MODULE_ID_SPACE :
+                case MODULE_ID_FM7|MODULE_ID_SPACE :
                   DEBUGF("%s:FM5 0x%08x \n",__func__,id);
                   /*do nothing*/
                   break;
@@ -1403,7 +1419,9 @@ static void _reset_module(void)
                   break;
                 case MODULE_ID_FW1|MODULE_ID_SPACE :
                 case MODULE_ID_FW2|MODULE_ID_SPACE :
+                case MODULE_ID_FM2|MODULE_ID_SPACE :
                 case MODULE_ID_FM5|MODULE_ID_SPACE :
+                case MODULE_ID_FM7|MODULE_ID_SPACE :
                   DEBUGF("%s:FM5 0x%08x \n",__func__,id);
                   /*do nothing*/;
                   break;
@@ -1465,7 +1483,9 @@ void static _print_mod_status(void)
                 (id != (MODULE_ID_EM1|MODULE_ID_SPACE)) &&
                 (id != (MODULE_ID_FW1|MODULE_ID_SPACE)) &&
                 (id != (MODULE_ID_FW2|MODULE_ID_SPACE)) &&
+                (id != (MODULE_ID_FM2|MODULE_ID_SPACE)) &&
                 (id != (MODULE_ID_FM5|MODULE_ID_SPACE)) &&
+                (id != (MODULE_ID_FM7|MODULE_ID_SPACE)) &&
                 (id != (MODULE_ID_TE1|MODULE_ID_SPACE)) &&
                 (id != (MODULE_ID_NON|MODULE_ID_SPACE)))
             {
@@ -1672,7 +1692,9 @@ void nai_chk_hss_mod_rdy_state(void)
                 (id != (MODULE_ID_EM1|MODULE_ID_SPACE)) &&
                 (id != (MODULE_ID_FW1|MODULE_ID_SPACE)) &&
                 (id != (MODULE_ID_FW2|MODULE_ID_SPACE)) &&
+                (id != (MODULE_ID_FM2|MODULE_ID_SPACE)) &&
                 (id != (MODULE_ID_FM5|MODULE_ID_SPACE)) &&
+                (id != (MODULE_ID_FM7|MODULE_ID_SPACE)) &&
                 (id != (MODULE_ID_TE1|MODULE_ID_SPACE)) &&
                 (id != (MODULE_ID_NON|MODULE_ID_SPACE)))
             {
@@ -1699,3 +1721,38 @@ void nai_chk_hss_mod_rdy_state(void)
         }
     }
 }
+
+static int do_enablemodule(cmd_tbl_t* cmdtp, int flag, int argc, char* const argv[])
+{
+   nai_enable_module();
+   return 0;
+}
+
+
+static int do_disablemodule(cmd_tbl_t* cmdtp, int flag, int argc, char* const argv[])
+{
+   nai_disable_module();
+   return 0;
+}
+
+static int do_resetmodule(cmd_tbl_t* cmdtp, int flag, int argc, char* const argv[])
+{
+   nai_module_reset();
+   return 0;
+}
+
+/*module commnad*/
+U_BOOT_CMD(
+       naienablemodule, 2, 1, do_enablemodule,
+       "Power ON module",""
+);
+
+U_BOOT_CMD(
+       naidisablemodule, 2, 1, do_disablemodule,
+       "Power OFF module",""
+);
+
+U_BOOT_CMD(
+       nairesetmodule, 2, 1, do_resetmodule,
+       "Reset module",""
+);
